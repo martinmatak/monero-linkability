@@ -11,10 +11,10 @@ written by Andrew Miller, Malte Moser, Kevin Lee and Arvind Narayanan.
  #### Getting information about the transactions
  First what we need is to get data for processing. For that, we use the following GitHub repository: [transactions-export](https://github.com/moneroexamples/transactions-export).
 Here is not described how to use that repository since that is already covered in that repository. 
-To go through the complete problem faster, here we work with only first 1% (12361 blocks) of a blockchain which is used in the paper. 
+To go through the complete problem faster, here we work with only first 1% (first 12361 blocks) of a blockchain which is used in the paper. 
 Command which we need to execute after setting up the project linked above is:
 
-`/xmr2csv -t 0 -n 12361  --all-key-images --out-csv-file4 "allColumns.csv"`
+`./xmr2csv -t 0 -n 12361  --all-key-images --out-csv-file4 "allColumns.csv"`
 
 Now we have the information about the transactions stored in `allColumns.csv`.
 
@@ -52,7 +52,8 @@ Download, install, and test Apache Spark (version >= 2.2.0) in $SPARK_HOME:
     
 (not sure if the last step is necessary)
 
-Now, the next steps should be followed
+Now, the next steps should be followed:
+
 0) Clone this repository. 
 1) Make sure you are in right directory `cd monero-linkability`. 
 3) Execute `sbt clean && sbt compile && sbt package`. 
@@ -76,12 +77,12 @@ We will use [gcloud dataproc jobs submit](https://cloud.google.com/sdk/gcloud/re
 
 Command which submits a job is the following:
 ```
-gcloud dataproc jobs submit spark --cluster cluster_name --jar path_to_package > stdout.txt 2> results.txt
+gcloud dataproc jobs submit spark --cluster cluster_name --jar path_to_package -- bucketName transactions.csv > stdout.txt 2> results.txt
 ```
 
 ## Results 
 
-Percentage of determined coins on 1% of a blockchain should be 0.725, i.e. for almost 3 out of 4 coins we know for sure in which transaction are they used as a real input.
+Percentage of determined coins on first 1% of a blockchain should be 0.725, i.e. for almost 3 out of 4 coins we know for sure in which transaction are they used as a real input.
 
 After the last command from the previous section is executed, we can find results in `results.txt`. Moreover, results are on a cluster as well - in `bucketName`, in a directory created for this job.
 
