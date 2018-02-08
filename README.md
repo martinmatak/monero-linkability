@@ -80,6 +80,9 @@ Command which submits a job is the following:
 gcloud dataproc jobs submit spark --cluster cluster_name --jar path_to_package -- bucketName transactions.csv > stdout.txt 2> results.txt
 ```
 
+This way, master node of a cluster is also a master node for our spark application. Same thing holds for workers.
+
+*Note*: make sure that driver-memory and driver-maxResultSize are big enough if you are working with a bigger instances.
 ## Results 
 
 Percentage of determined coins on first 1% of a blockchain should be 0.725, i.e. for almost 3 out of 4 coins we know for sure in which transaction are they used as a real input.
