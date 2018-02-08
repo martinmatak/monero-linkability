@@ -16,9 +16,9 @@ object Main {
   def main(args: Array[String]) {
 
     val spark = org.apache.spark.sql.SparkSession.builder
-      .master("local")
       .appName("Monero Linkability")
       .getOrCreate
+      //.master("local")
 
     try {
       // val bucket_name = "dataproc-c6577e59-b6be-4c72-9aaf-aba47b84a259-asia-southeast1"
