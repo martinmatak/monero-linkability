@@ -18,12 +18,8 @@ object Main {
     val spark = org.apache.spark.sql.SparkSession.builder
       .appName("Monero Linkability")
       .getOrCreate
-      //.master("local")
 
     try {
-      // val bucket_name = "dataproc-c6577e59-b6be-4c72-9aaf-aba47b84a259-asia-southeast1"
-      // val input_fn = "transactions-1percent.csv"
-
       val bucket_name = args(0)
       val input_fn = args(1)
 
@@ -39,18 +35,6 @@ object Main {
             (chunks(0).trim(): String, chunks(1).trim(): String)
         }
 
-      //      possible optimization: Long numbers instead of string hashes
-      //      val key_image_unique_id = lines.map {
-      //        line =>
-      //          val chunks = line.toString().substring(1, line.toString().length - 1).split(",")
-      //          chunks(0).trim()
-      //      }.distinct().zipWithUniqueId()
-      //
-      //      val candidate_unique_id = lines.map {
-      //        line =>
-      //          val chunks = line.toString().substring(1, line.toString().length - 1).split(",")
-      //          chunks(1).trim()
-      //      }.distinct().zipWithUniqueId()
 
       // (key_image, [candidate1, candidate2, ...])
       val tx_inputs = tx_input
@@ -121,7 +105,7 @@ object Main {
       }
 
 
-      // save to file
+      // save results in two columns: key_image, output_pub_key 
       new PrintWriter(System.out) {
         tx_realInput.foreach {
           case (k, v) =>
