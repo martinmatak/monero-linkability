@@ -1,17 +1,39 @@
 package main.scala
 
-import java.io.{File, PrintWriter}
+import java.io.PrintWriter
 import java.util
 
-import org.apache.commons.io.FileUtils
-import org.apache.spark.{SparkContext, SparkFiles}
-import org.apache.spark.sql.SQLContext
+import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.types.{LongType, StructField, StructType}
+import org.apache.spark.sql.Row
 
 import scala.collection.mutable
-import scala.io.Source
 
 
 object Main {
+
+  // https://stackoverflow.com/questions/30304810/dataframe-ified-zipwithindex, second answer
+  def dfZipWithIndex(
+                      df: DataFrame,
+                      offset: Int = 1,
+                      colName: String = "id",
+                      inFront: Boolean = true
+                    ) : DataFrame = {
+    df.sqlContext.createDataFrame(
+      df.rdd.zipWithIndex.map(ln =>
+        Row.fromSeq(
+          (if (inFront) Seq(ln._2 + offset) else Seq())
+            ++ ln._1.toSeq ++
+            (if (inFront) Seq() else Seq(ln._2 + offset))
+        )
+      ),
+      StructType(
+        (if (inFront) Array(StructField(colName,LongType,false)) else Array[StructField]())
+          ++ df.schema.fields ++
+          (if (inFront) Array[StructField]() else Array(StructField(colName,LongType,false)))
+      )
+    )
+  }
 
   def main(args: Array[String]) {
 
@@ -19,21 +41,35 @@ object Main {
       .appName("Monero Linkability")
       .getOrCreate
 
+    // used for SQLSpark API (DataFrame)
+    import spark.implicits._
+
+
     try {
       val bucket_name = args(0)
       val input_fn = args(1)
 
       // Load the lines of text
-      val lines = spark.read.format("csv").option("header", "true").load("gs://" + bucket_name + "/" + input_fn).rdd
+      val lines = spark.read.format("csv")
+        .option("header", "true")
+        .load("gs://" + bucket_name + "/" + input_fn)
+        .toDF("key_image", "coin_candidate")
+
+      //      optimization: numbers as id instead of string hashes
+      val key_image_id = dfZipWithIndex(lines.select("key_image").distinct(), colName = "key_image_id")
+        .withColumnRenamed("key_image", "key_image_join")
+      val candidate_id = dfZipWithIndex(lines.select("coin_candidate").distinct(), colName = "coin_candidate_id")
+        .withColumnRenamed("coin_candidate", "coin_candidate_join")
 
       // (key_image, candidate1)
       // (key_image, candidate2)
-      val tx_input = lines
-        .map {
-          line =>
-            val chunks = line.toString().substring(1, line.toString().length - 1).split(",")
-            (chunks(0).trim(): String, chunks(1).trim(): String)
-        }
+      val key_image_candidate = lines
+        .join(key_image_id, $"key_image" === $"key_image_join")
+        .join(candidate_id, $"coin_candidate" === $"coin_candidate_join")
+        .select("key_image_id", "coin_candidate_id")
+
+
+      val tx_input = key_image_candidate.map(row => (row(0).asInstanceOf[Long], row(1).asInstanceOf[Long])).rdd
 
 
       // (key_image, [candidate1, candidate2, ...])
@@ -47,26 +83,28 @@ object Main {
       }.distinct()
         .map {
           case (input) =>
-            (input, "?")
+            (input, -1L)
         }
 
       // that's it - nothing more can be done with those RDDs actually ..
 
       val input_tx_map = collection.mutable.Map(input_tx.collectAsMap().toSeq: _*)
-      val tx_inputs_map = new util.HashMap[String, util.HashSet[String]]()
+      val tx_inputs_map = new util.HashMap[Long, util.HashSet[Long]]()
 
       for ((tx, inputs) <- tx_inputs) {
-        tx_inputs_map.put(tx, new util.HashSet[String]())
+        tx_inputs_map.put(tx, new util.HashSet[Long]())
         for (input <- inputs) {
           tx_inputs_map.get(tx).add(input)
         }
       }
 
 
+      var numOfIterations = 0
       var changeHappened = false
       do {
-        var keysToRemove = new collection.mutable.HashSet[String]()
-        var inputsToRemove = new collection.mutable.HashSet[String]()
+        numOfIterations += 1
+        var keysToRemove = new collection.mutable.HashSet[Long]()
+        var inputsToRemove = new collection.mutable.HashSet[Long]()
         changeHappened = false
         val iterator = tx_inputs_map.entrySet.iterator()
         while (iterator.hasNext) {
@@ -96,23 +134,37 @@ object Main {
 
       } while (changeHappened)
 
-      val tx_realInput = new mutable.HashMap[String, String]()
+      val tx_realInput = new mutable.HashMap[Long, Long]()
       //prepare result
       for ((input, tx) <- input_tx_map) {
-        if (tx != "?") {
+        if (tx != -1L) {
           tx_realInput(tx) = input
         }
       }
+      val percentage = tx_realInput.size * 1.0 / tx_inputs.size
 
+      //convert Long back to String
+      val tx_realInput_rdd = spark.sparkContext.parallelize(tx_realInput.toSeq)
+      val key_image_coin_determined = tx_realInput_rdd.toDF("image_id", "determined_coin_id")
+      val determined_coins = key_image_coin_determined
+        .join(key_image_id, $"image_id" === $"key_image_id", joinType = "inner")
+        .join(candidate_id, $"determined_coin_id" === $"coin_candidate_id", joinType = "inner")
+          .select("key_image_join", "coin_candidate_join")
 
-      // save results in two columns: key_image, output_pub_key 
+      // results are in two columns: key_image_join, coin_candidate_join
+
+      // here we are printing whole dataframe just to display the result
+      // consequence is that it is all collected to the driver and then printed
+      // WARNING: you don't want to do this in production!!
+      determined_coins.collect().foreach(println)
+
+      // in production, you should save it in HDFS / Hive / Cloud ...
+      // e.g. determined_coins.write.option("header", "true").csv("result.csv")
+      // be aware that you need to set up additional configuration so that you can connect to your storage space
+
       new PrintWriter(System.out) {
-        tx_realInput.foreach {
-          case (k, v) =>
-            write(k + "," + v)
-            write("\n")
-        }
-        write("Percentage of determined real coins: " + tx_realInput.size * 1.0 / tx_inputs.size + "\n")
+        write("Percentage of determined real coins: " + percentage + "\n")
+        write("Number of iterations: " + numOfIterations + "\n")
         close()
       }
     }
